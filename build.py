@@ -108,8 +108,9 @@ def load_config() -> dict:
 
 
 def page(title, subtitle, body, cfg, css, home, github):
+    head_title = title if title == cfg["site_title"] else f"{title} · {cfg['site_title']}"
     return TEMPLATE.format(
-        title=title, subtitle=subtitle, body=body, site_title=cfg["site_title"],
+        title=head_title, subtitle=subtitle, body=body, site_title=cfg["site_title"],
         css=css, home=home, github=github, today=date.today().isoformat(),
     )
 
