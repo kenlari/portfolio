@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vaultly — web application assessment · kennethlari</title>
+<meta name="description" content="Recon → exploitation → remediation report on a deliberately vulnerable notes service.">
+<meta property="og:title" content="Vaultly — web application assessment">
+<meta property="og:description" content="Recon → exploitation → remediation report on a deliberately vulnerable notes service.">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="site">
+  <a class="brand" href="../index.html">kennethlari</a>
+  <nav><a href="../index.html">index</a><a href="https://github.com/YOUR-USERNAME">github</a></nav>
+</header>
+<main class="wrap">
+<h1>Vaultly — web application assessment</h1>
+<p class="sub">Recon → exploitation → remediation report on a deliberately vulnerable notes service.</p>
+<h1 id="penetration-test-report-vaultly-142">Penetration Test Report — Vaultly 1.4.2</h1>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Client</strong></td>
+<td>Vaultly (self-owned training target)</td>
+</tr>
+<tr>
+<td><strong>Engagement</strong></td>
+<td>Internal web application assessment</td>
+</tr>
+<tr>
+<td><strong>Tester</strong></td>
+<td>kennethlari</td>
+</tr>
+<tr>
+<td><strong>Date</strong></td>
+<td>2026-11-11</td>
+</tr>
+<tr>
+<td><strong>Scope</strong></td>
+<td><code>http://127.0.0.1:8080</code> only</td>
+</tr>
+<tr>
+<td><strong>Methodology</strong></td>
+<td>OWASP WSTG / PTES (recon → enumeration → exploitation → reporting)</td>
+</tr>
+<tr>
+<td><strong>Overall risk</strong></td>
+<td><strong>Critical</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>This is a self-authored lab target. The report format is the deliverable that
+gets you hired — anyone can run a scanner; few can write this page.</p>
+</blockquote>
+<hr />
+<h2 id="1-executive-summary">1. Executive summary</h2>
+<p>Vaultly is a small internal notes service. Testing found that its diagnostic
+endpoint is reachable without authentication and discloses the production API
+key and database password, that notes belonging to other users can be read by
+changing an identifier, and that the connectivity-check feature passes unsanitised
+input to a shell, allowing any unauthenticated visitor to run commands on the
+server.</p>
+<p>The three issues chain: no credentials are required at any point. A single
+request yields the database password, and a second yields a shell as the
+application user. This represents full compromise of the host.</p>
+<p><strong>Business impact:</strong> complete loss of confidentiality of the notes database and
+of the credentials that protect it, plus remote code execution on the
+application server.</p>
+<p><strong>Recommendation:</strong> treat as an emergency. Disable <code>/debug</code> in production,
+enforce object-level authorization on <code>/api/note</code>, and replace the shell call in
+<code>/ping</code> with a non-shell network check. Rotate the exposed API key and database
+password immediately — they must be assumed compromised.</p>
+<hr />
+<h2 id="2-findings">2. Findings</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Finding</th>
+<th>Severity</th>
+<th>CVSS v3.1</th>
+<th>Endpoint</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Unauthenticated information disclosure</td>
+<td>High</td>
+<td>7.5</td>
+<td><code>GET /debug</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>Broken object-level authorization (IDOR)</td>
+<td>High</td>
+<td>7.5</td>
+<td><code>GET /api/note?id=N</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td>OS command injection</td>
+<td>Critical</td>
+<td>9.8</td>
+<td><code>GET /ping?host=</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td>Server banner / version disclosure</td>
+<td>Info</td>
+<td>0.0</td>
+<td>any</td>
+</tr>
+</tbody>
+</table>
+<h3 id="f1-unauthenticated-information-disclosure">F1 — Unauthenticated information disclosure</h3>
+<p><code>/debug</code> returns the live API key, database password and user list to anyone.</p>
+<pre><code>$ curl -s http://127.0.0.1:8080/debug
+{
+  &quot;service&quot;: &quot;vaultly&quot;,
+  &quot;version&quot;: &quot;1.4.2&quot;,
+  &quot;api_key&quot;: &quot;vault_live_9f2c41a7d8be4f0e9c6a1b3d5e7f8a90&quot;,
+  &quot;db_password&quot;: &quot;Pr0d-Vaultly-2019!&quot;,
+  &quot;users&quot;: [&quot;alice&quot;, &quot;admin&quot;]
+}
+</code></pre>
+<p><strong>Impact:</strong> instant credential compromise; the database password likely grants
+lateral movement beyond this host.
+<strong>Fix:</strong> remove the endpoint from the production build; if diagnostics are
+required, gate them behind admin auth and return health status only, never
+secrets. Rotate both credentials.</p>
+<h3 id="f2-broken-object-level-authorization-idor">F2 — Broken object-level authorization (IDOR)</h3>
+<p>The endpoint takes an object id and returns it without checking that the caller
+owns it. There is no authentication at all, and even with auth the ownership
+check is missing.</p>
+<pre><code>$ for i in 1 2 3; do curl -s &quot;http://127.0.0.1:8080/api/note?id=$i&quot;; echo; done
+{&quot;id&quot;: 1, &quot;owner&quot;: &quot;alice&quot;, &quot;body&quot;: &quot;remember to rotate the staging key&quot;}
+{&quot;id&quot;: 2, &quot;owner&quot;: &quot;admin&quot;, &quot;body&quot;: &quot;flag{idor_is_the_most_common_web_bug}&quot;}
+{&quot;id&quot;: 3, &quot;owner&quot;: &quot;alice&quot;, &quot;body&quot;: &quot;lunch on friday?&quot;}
+</code></pre>
+<p><strong>Impact:</strong> read access to every other user's data; sequentially enumerable.
+<strong>Fix:</strong> authenticate the request, then authorize per object
+(<code>note.owner_id == session.user_id</code>) inside the data layer, not the UI.</p>
+<h3 id="f3-os-command-injection-critical">F3 — OS command injection (critical)</h3>
+<p><code>host</code> is interpolated into a shell string. Shell metacharacters execute.</p>
+<pre><code>$ curl -s &quot;http://127.0.0.1:8080/ping?host=127.0.0.1%3Bid%3Buname%20-a&quot;
+uid=1000(kennethlari) gid=1000(kennethlari) groups=1000(kennethlari),...
+Linux kali 7.1.5+kali-amd64 #1 SMP ... x86_64 GNU/Linux
+</code></pre>
+<p><strong>Impact:</strong> remote code execution as the application user, unauthenticated.
+From here: read the app source, move to the database, persist.
+<strong>Fix:</strong> never use <code>shell=True</code> with user input. Use
+<code>subprocess.run(["ping", "-c", "1", host], shell=False)</code>, validate <code>host</code>
+against a strict allowlist (or <code>ipaddress.ip_address()</code>), and drop the
+feature's privileges.</p>
+<h3 id="f4-banner-disclosure-informational">F4 — Banner disclosure (informational)</h3>
+<p><code>Server: Vaultly/1.4.2</code> lets an attacker map the build to known CVEs.
+<strong>Fix:</strong> suppress the version, or accept the risk.</p>
+<hr />
+<h2 id="3-evidence">3. Evidence</h2>
+<p>Raw exploitation transcript: <a href="evidence.log"><code>evidence.log</code></a>
+Reproduction: <code>python3 app.py</code> then <code>python3 exploit.py</code>.</p>
+<hr />
+<h2 id="4-remediation-priority">4. Remediation priority</h2>
+<ol>
+<li><strong>Today</strong> — rotate the API key and database password; take <code>/debug</code> offline.</li>
+<li><strong>This sprint</strong> — add authentication + object-level authorization to
+   <code>/api/note</code>; remove <code>shell=True</code> from <code>/ping</code>.</li>
+<li><strong>This quarter</strong> — add SAST/dependency scanning and a pre-production check
+   that fails the build if debug routes are enabled.</li>
+</ol>
+<hr />
+<h2 id="5-what-a-reviewer-looks-for">5. What a reviewer looks for</h2>
+<p>A hiring manager skimming this will check three things: do you separate
+<em>severity</em> from <em>finding</em>, do you show reproducible evidence, and do you write
+fixes a developer can act on without asking you questions. All three are here.
+That is why this document is worth more than the exploit script.</p>
+</main>
+<footer>Built 2026-11-11 · <a href="https://github.com/YOUR-USERNAME">kennethlari</a> · static, no trackers</footer>
+</body>
+</html>

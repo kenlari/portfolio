@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Crypto range — seven writeups · kennethlari</title>
+<meta name="description" content="From encoding stacks to ECDSA nonce reuse, each break explained and reproduced.">
+<meta property="og:title" content="Crypto range — seven writeups">
+<meta property="og:description" content="From encoding stacks to ECDSA nonce reuse, each break explained and reproduced.">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="site">
+  <a class="brand" href="../index.html">kennethlari</a>
+  <nav><a href="../index.html">index</a><a href="https://github.com/YOUR-USERNAME">github</a></nav>
+</header>
+<main class="wrap">
+<h1>Crypto range — seven writeups</h1>
+<p class="sub">From encoding stacks to ECDSA nonce reuse, each break explained and reproduced.</p>
+<h1 id="writeups-all-seven">Writeups — all seven</h1>
+<p>Every flag below was produced by <code>python3 work/solvers.py</code>. That script is the
+reference implementation; this file is the <em>reasoning</em>, which matters more.</p>
+<hr />
+<h2 id="c1-encoding-is-not-encryption-flagenc0ding_is_not_encryption">C1 — Encoding is not encryption · <code>flag{enc0ding_is_not_encryption}</code></h2>
+<pre><code>hex -&gt; base64 -&gt; rot13
+</code></pre>
+<p>Three "locks", zero keys. The tells:</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Tell</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>hex</td>
+<td>only <code>0-9a-f</code>, length even</td>
+</tr>
+<tr>
+<td>base64</td>
+<td>alphabet <code>A-Za-z0-9+/</code>, length % 4 == 0, trailing <code>=</code></td>
+</tr>
+<tr>
+<td>rot13</td>
+<td>output still looks like text but <code>f</code>→<code>s</code>, <code>l</code>→<code>y</code>, so <code>flag{</code> reads as <code>synt{</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Lesson:</strong> encoding ≠ encryption. Anyone with <code>base64 -d</code> is inside. If you
+find this in a real app (e.g. a "secure" token that is just base64), that's an
+information-disclosure bug, not crypto.</p>
+<hr />
+<h2 id="c2-single-byte-xor-flagsingle_byte_xor_reveals_secrets">C2 — Single-byte XOR · <code>flag{single_byte_xor_reveals_secrets}</code></h2>
+<p>The key is one byte, so there are only 256 possible plaintexts. Never eyeball
+them — write a scorer.</p>
+<pre><code class="language-python">score(plaintext) = sum(log(P(byte)))
+</code></pre>
+<ul>
+<li>English letters get their real frequency (space 18%, e 10%, t 7.5%, …)</li>
+<li>Punctuation/digits get a flat small weight</li>
+<li>Non-printable bytes get a large penalty (this is the big separator)</li>
+</ul>
+<p>Take the max over 256 keys. Key was <code>0x42</code>.</p>
+<p><strong>Lesson:</strong> a 1-byte keyspace is 8 bits. It is brute-forceable by hand.</p>
+<hr />
+<h2 id="c3-repeating-key-xor-flagrepeating_keys_leak_like_rusted_pipes">C3 — Repeating-key XOR · <code>flag{repeating_keys_leak_like_rusted_pipes}</code></h2>
+<p>Two-step attack:</p>
+<ol>
+<li><strong>Find the key length.</strong> For each candidate <code>ks</code>, take consecutive blocks of
+   <code>ks</code> bytes and compute the <em>normalized Hamming distance</em> (bits differing per
+   byte). Correct key length aligns the blocks on the same key bytes, so the
+   distance drops. Real key length was <strong>5</strong>.</li>
+<li><strong>Split and conquer.</strong> Transpose the ciphertext into <code>ks</code> columns. Column <code>i</code>
+   is a plain single-byte XOR (C2). Solve each, concatenate the keys → <code>lem0n</code>.</li>
+</ol>
+<p><strong>Lesson:</strong> repeating a short key is what kills it. Real stream ciphers use a
+nonce + a PRF so the keystream never repeats.</p>
+<hr />
+<h2 id="c4-vigenere-flagvigenere_falls_to_frequency_analysis">C4 — Vigenère · <code>flag{vigenere_falls_to_frequency_analysis}</code></h2>
+<p>Vigenère is <code>keylen</code> interleaved Caesar ciphers, so:</p>
+<ol>
+<li><strong>Key length via index of coincidence.</strong> For candidate lengths, split into
+   columns and average <code>IC = Σ n_i(n_i-1) / n(n-1)</code>. English sits near 0.066;
+   wrong lengths sit near uniform-random 0.038. Key length <strong>6</strong>.</li>
+<li><strong>Shift per column via chi-square.</strong> Compare each column's letter
+   distribution to English frequencies; the shift minimizing chi-square is that
+   Caesar key. Shifts spell <code>cipher</code>.</li>
+</ol>
+<p><strong>Lesson:</strong> polyalphabetic ≠ secure. It resisted frequency analysis for 300
+years only because nobody counted.</p>
+<hr />
+<h2 id="c5-weak-hash-weak-password-flagmollycat">C5 — Weak hash, weak password · <code>flag{mollycat}</code></h2>
+<p><code>07d6ba4b8935a4d7d6ac6b402610420d</code> is bare MD5 — no salt, no iterations, no
+memory hardness. It fell in <strong>3 seconds</strong> to a wordlist, at line 40,001 of
+rockyou:</p>
+<pre><code class="language-bash">john --format=raw-md5 --wordlist=wordlists/rockyou.txt work/a.md5
+john --show --format=raw-md5 work/a.md5     # ?:mollycat
+</code></pre>
+<p><strong>Lesson:</strong> this is the single most common real-world finding. Correct fix is
+Argon2id / bcrypt / scrypt with a per-user salt — and a password that isn't in
+a leaked corpus.</p>
+<hr />
+<h2 id="c6-rsa-with-e3-no-padding-flagrsa_without_padding_is_a_bad_idea">C6 — RSA with e=3, no padding · <code>flag{rsa_without_padding_is_a_bad_idea}</code></h2>
+<p>Textbook RSA computes <code>c = m^e mod n</code>. With <code>e = 3</code> and no padding, a 39-byte
+message gives <code>m^3</code> — which is <strong>smaller than n</strong>, so the <code>mod n</code> never wraps.
+The ciphertext <em>is</em> a perfect cube:</p>
+<pre><code>m = integer_cube_root(c)
+</code></pre>
+<p>No factoring needed. Use Newton's method for the integer root; floats lose
+precision around 300 digits.</p>
+<p><strong>Lesson:</strong> this is why PKCS#1 v1.5 / OAEP padding exists. Unpadded RSA is
+malleable and, for small <code>e</code>, trivially invertible.</p>
+<hr />
+<h2 id="c7-ecdsa-nonce-reuse-flagnonce_reuse_71cbdf2491ed4108">C7 — ECDSA nonce reuse · <code>flag{nonce_reuse_71cbdf2491ed4108}</code></h2>
+<p>Two signatures, same key, same <code>k</code>. Since <code>r</code> is the x-coordinate of <code>k·G</code>,
+<strong>identical <code>r</code> means identical <code>k</code></strong>.</p>
+<pre><code>k = (z1 - z2) / (s1 - s2)  mod n
+d = (s1·k - z1) / r        mod n
+</code></pre>
+<p>Then verify: recompute <code>d·G</code> and check it equals the published public key. The
+solver does exactly that before printing the flag. Recovered
+<code>d = 71cbdf24…66bc</code>.</p>
+<p><strong>Lesson:</strong> this is the bug that broke the PS3 (Sony used a <em>constant</em> <code>k</code>) and
+has drained real Bitcoin wallets. The fix is a deterministic nonce
+(RFC 6979) or a CSPRNG you actually trust.</p>
+<hr />
+<h2 id="where-to-go-next">Where to go next</h2>
+<table>
+<thead>
+<tr>
+<th>Next challenge</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RSA common modulus / Wiener's attack</td>
+<td>the other classic RSA breaks</td>
+</tr>
+<tr>
+<td>Padding oracle on CBC</td>
+<td>the bridge into web crypto</td>
+</tr>
+<tr>
+<td>Hash length extension</td>
+<td>why <code>MD5(secret‖msg)</code> MACs are broken</td>
+</tr>
+<tr>
+<td>ECDSA nonce <strong>bias</strong> (lattice attack)</td>
+<td>nonce reuse is a special case; <code>k</code> with biased bits is also fatal</td>
+</tr>
+</tbody>
+</table>
+<p>Run <code>python3 build.py --verify</code> any time you want to prove the range still works.</p>
+</main>
+<footer>Built 2026-11-11 · <a href="https://github.com/YOUR-USERNAME">kennethlari</a> · static, no trackers</footer>
+</body>
+</html>

