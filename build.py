@@ -76,7 +76,7 @@ TEMPLATE = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{title} · {site_title}</title>
+<title>{head_title}</title>
 <meta name="description" content="{subtitle}">
 <meta property="og:title" content="{title}">
 <meta property="og:description" content="{subtitle}">
@@ -110,7 +110,7 @@ def load_config() -> dict:
 def page(title, subtitle, body, cfg, css, home, github):
     head_title = title if title == cfg["site_title"] else f"{title} · {cfg['site_title']}"
     return TEMPLATE.format(
-        title=head_title, subtitle=subtitle, body=body, site_title=cfg["site_title"],
+        title=title, head_title=head_title, subtitle=subtitle, body=body, site_title=cfg["site_title"],
         css=css, home=home, github=github, today=date.today().isoformat(),
     )
 
